@@ -2,15 +2,19 @@
 
 set -euxo pipefail
 
-is_pull_request=$(jq -r .pull_request $GITHUB_EVENT_PATH)
-ref=$(jq -r .ref $GITHUB_EVENT_PATH)
+IS_PULL_REQUEST=$(jq -r .pull_request $GITHUB_EVENT_PATH)
+REF=$(jq -r .ref $GITHUB_EVENT_PATH)
+ENVIRONMENT="preview"
+TRANSIENT="true"
 
-if [ "$is_pull_request" != "null" ]; then
+if [ "$IS_PULL_REQUEST" != "null" ]; then
     DEST_DIR="preview/PR/$(jq .pull_request.number $GITHUB_EVENT_PATH)"
-elif [ "$ref" != "ref/heads/master" ]; then
-    DEST_DIR="preview/branch/${ref##*/}"
+elif [ "$REF" != "ref/heads/master" ]; then
+    DEST_DIR="preview/branch/${REF##*/}"
 else
     DEST_DIR=.
+    ENVIRONMENT="staging"
+    TRANSIENT="false"
 fi
 
 PUBLISH_DIR=$(mktemp -d /tmp/publish.XXXXXXXX)
@@ -27,3 +31,24 @@ git add .
 git commit -m "Website updated to $(git rev-parse --short HEAD)"
 git push origin asf-site
 
+URI=https://api.github.com
+API_HEADER="Accept: application/vnd.github.ant-man-preview+json"
+AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
+
+IFS='' read -r -d '' DEPLOYMENT_JSON<<"EOF"
+{
+  "ref": "${REF}",
+  "auto_merge": false,
+  "environment": "${ENVIRONMENT}"
+  "description": "Website built and deployed to ${ENVIRONMENT} environment",
+  "transient": ${TRANSIENT},
+  "payload": "https://apache.camel.com/staging/${DEST_DIR}",
+  "description": "Deploy request from hubot"
+}
+EOF
+
+curl -XPOST -sSL \
+    -H "${AUTH_HEADER}" \
+    -H "${API_HEADER}" \
+    -d "${DEPLOYMENT_JSON}" \
+    "${URI}/repos/apache/camel-website"
